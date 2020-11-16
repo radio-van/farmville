@@ -1,6 +1,8 @@
-from exceptions import ShellCommandException
+from enum import Enum
 from typing import Optional
-from utils import exec_shell, get_default_gateway, parse_bstring_to_dict, write_file
+
+from farmville.exceptions import ShellCommandException
+from farmville.utils import exec_shell, get_default_gateway, parse_bstring_to_dict, write_file
 
 # TODO read env settings
 LXC_BASE_NAME = 'base'
@@ -8,59 +10,75 @@ LXC_BRIDGE_IFACE = 'lxcbr0'
 LXC_PATH = '/home/farmer/lxc'
 
 
+class ContainerState(Enum):
+    RUNNING = running
+    STOPPED = stopped
+    NOT_EXISTS = not_exists
+
+
 class LxcContainerManagementMixin:
     """
     Wrapper around low-level shell calls to LXC.
     """
-    @staticmethod
-    def container_exec(name: str, command: str):
-        # TODO check state and start before trying to attach
+    @classmethod
+    def container_exec(cls, name: str, command: str):
+        if cls.container_state(name=name) == 'stopped':
+            cls.container_start(name=name)
+
         base_command = f'lxc-attach -n {name} --clear-env --'
         try:
             exec_shell(' '.join((base_command, command)))
         except ShellCommandException as exc:
             raise Exception('Failed to exec command inside container') from exc
 
-    @staticmethod
-    def container_start(name: str):
+    @classmethod
+    def container_start(cls, name: str):
+        if cls.container_state(name=name) == 'running':
+            return
         try:
-            # TODO check state before trying to start
             exec_shell(f'lxc-start -n {name}')
         except ShellCommandException as exc:
             raise Exception('Failed to start container') from exc
 
-    @staticmethod
-    def container_stop(name: str):
+    @classmethod
+    def container_stop(cls, name: str):
+        if cls.container_state(name=name) == 'stopped':
+            return
         try:
-            # TODO check state before trying to stop
             exec_shell(f'lxc-stop -n {name}')
         except ShellCommandException as exc:
             raise Exception('Failed to start container') from exc
 
-    @staticmethod
-    def _container_clone(base: str, target: str):
-        # TODO check state and stop before trying to copy
-        # TODO maybe move to main class
+    @classmethod
+    def container_clone(cls, base: str, target: str):
+        if cls.container_state(name=target) != 'not_exists':
+            raise Exception(f'Target container with name {target} is alredy exist')
+
+        if cls.container_state(name=base) == 'running':
+            cls.stop_container(name=base)
+
         try:
             exec_shell(f'lxc-copy -n {base} -N {target} -B overlayfs -s')
         except ShellCommandException as exc:
             raise Exception('Failed to create base container clone') from exc
 
-    def _container_state(self, name: str) -> str:
-        info = self._container_info(name=name)
-        return info.get('State')
+    @classmethod
+    def container_state(cls, name: str) -> str:
+        state = cls._get_container_info(name=name).get('State')
+        return ContainerState[state].value
 
-    @staticmethod
-    def _container_info(name: str) -> dict:
+    @classmethod
+    def _get_container_info(cls, name: str) -> dict:
         """
         Low-level output of container info.
         Backend-specific, so should not be called directly.
+        Properties from parsed info fields should be provided.
         """
         try:
             container_info = exec_shell(f'lxc-info -n {name}')
         except ShellCommandException:
             # TODO check that error is 'doesnt exists' and return {} only in that case
-            return {}
+            return {'State': 'NOT_EXISTS'}
         return parse_bstring_to_dict(bstring=container_info)
 
 
@@ -68,7 +86,7 @@ class LxcContainerBackend(LxcContainerManagementMixin):
     def __init__(self, name: str):
         self._name = name
 
-        if self.state == 'not exists':
+        if self.state == 'not_exists':
             self._create()
 
     def _create(self):
@@ -132,18 +150,7 @@ class LxcContainerBackend(LxcContainerManagementMixin):
 
     @property
     def state(self):
-        """
-        Unificate container's state among backends.
-        """
-        # TODO define states as enum
-        if (state := self.container_state(name=self.name)) == 'RUNNING':
-            return 'running'
-        elif state == 'STOPPED':
-            return 'stopped'
-        elif state is None:
-            return 'not exists'
-        else:
-            return 'error'
+        return self.container_state(name=self.name)
 
     def _configure_defaults(self):
         self._write_container_default_config()

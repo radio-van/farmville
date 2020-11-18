@@ -77,3 +77,13 @@ class Container(LxcContainerBackend, AlpineContainerMixin):
         This is OS-specific and should be defined in mixin.
         """
         super().exec_inside_container(command)
+
+    def start(self):
+        super().container_start(name=self.name)
+
+    def stop(self):
+        super().container_stop(name=self.name)
+
+    def restart(self):
+        super().container_stop(name=self.name)
+        super().container_start(name=self.name)

@@ -11,9 +11,9 @@ LXC_PATH = '/home/farmer/lxc'
 
 
 class ContainerState(Enum):
-    RUNNING = running
-    STOPPED = stopped
-    NOT_EXISTS = not_exists
+    RUNNING = 'running'
+    STOPPED = 'stopped'
+    NOT_EXISTS = 'not_exists'
 
 
 class LxcContainerManagementMixin:
